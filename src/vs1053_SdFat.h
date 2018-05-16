@@ -39,6 +39,8 @@ enum state_m {
   playback,
   playMIDIbeep,
   paused_playback,
+  recording,
+  finishing,
   testing_memory,
   testing_sinewave,
   }; //enum state_m
@@ -443,7 +445,7 @@ extern SdFat sd;
  * \see SM_LINE1
  */
 // configure Line1 as single ended, otherwise as differential 10x gain for microphones.
-#define VS_LINE1_MODE
+// #define VS_LINE1_MODE
 
 
 
@@ -695,7 +697,10 @@ class vs1053 {
     void trackArtist(char*);
     void trackAlbum(char*);
     void stopTrack();
-    uint8_t isPlaying();
+    uint8_t recordOgg(char*, char*, bool);
+    uint8_t writeOggInLoop();
+    void stopRecord();
+    uint8_t isBusy();
     uint8_t skip(int32_t);
     uint8_t skipTo(uint32_t);
     uint32_t currentPosition();
@@ -736,6 +741,7 @@ class vs1053 {
     static void disableRefill();
     void getBitRateFromMP3File(char*);
     uint8_t VSLoadUserCode(char*);
+    uint8_t VSLoadImage(char*, uint16_t*);
 
     //Create the variables to be used by SdFat Library
 
@@ -747,7 +753,13 @@ class vs1053 {
     static uint16_t spi_Write_Rate;
 
 /** \brief Buffer for moving data between Filehandle and VSdsp.*/
-    static uint8_t mp3DataBuffer[32];
+#if WRITE_BUFFER_SIZE >= READ_BUFFER_SIZE
+    static uint8_t mp3DataBuffer[WRITE_BUFFER_SIZE];
+#else
+    static uint8_t mp3DataBuffer[READ_BUFFER_SIZE];
+#endif
+
+    static uint16_t registers_backup[3];
 
 /** \brief contains a local value of the beleived current bit-rate.*/
     uint8_t bitrate;

@@ -274,7 +274,7 @@ void parse_menu(byte key_command) {
 
   /* Display the file on the SdCard */
   } else if(key_command == 'd') {
-    if(!MP3player.isPlaying()) {
+    if(!MP3player.isBusy()) {
       // prevent root.ls when playing, something locks the dump. but keeps playing.
       // yes, I have tried another unique instance with same results.
       // something about SdFat and its 500byte cache.
@@ -312,8 +312,8 @@ void parse_menu(byte key_command) {
 
   } else if(key_command == 'S') {
     Serial.println(F("Current State of VS10xx is."));
-    Serial.print(F("isPlaying() = "));
-    Serial.println(MP3player.isPlaying());
+    Serial.print(F("isBusy() = "));
+    Serial.println(MP3player.isBusy());
 
     Serial.print(F("getState() = "));
     switch (MP3player.getState()) {

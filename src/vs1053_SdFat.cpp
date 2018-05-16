@@ -108,7 +108,13 @@ uint16_t vs1053::spi_Write_Rate;
 #endif
 
 //buffer for music
-uint8_t  vs1053::mp3DataBuffer[32];
+#if WRITE_BUFFER_SIZE >= READ_BUFFER_SIZE
+  uint8_t  vs1053::mp3DataBuffer[WRITE_BUFFER_SIZE];
+#else
+  uint8_t  vs1053::mp3DataBuffer[READ_BUFFER_SIZE];
+#endif
+
+uint16_t vs1053::registers_backup[3];
 
 //------------------------------------------------------------------------------
 /**
@@ -181,7 +187,7 @@ if (int8_t(sd.vol()->fatType()) == 0) {
  * Places the VS10xx into low power hard reset, after polity closing files
  * after releasing interrupts and or timers.
  *
- * \warning Will stop any playing tracks. Check isPlaying() prior to executing, as not to stop on a track.
+ * \warning Will stop any playing tracks. Check isBusy() prior to executing, as not to stop on a track.
  * \note use begin() to reinitialize the VS10xx, for use.
  */
 void vs1053::end() {
@@ -331,7 +337,7 @@ uint8_t vs1053::VSLoadUserCode(char* fileName){
   union twobyte n;
 
   if(!digitalRead(MP3_RESET)) return 3;
-  if(isPlaying()) return 1;
+  if(isBusy()) return 1;
   if(!digitalRead(MP3_RESET)) return 3;
 
   //Open the file in read mode.
@@ -363,6 +369,73 @@ uint8_t vs1053::VSLoadUserCode(char* fileName){
   return 0;
 }
 
+//------------------------------------------------------------------------------
+/**
+ * \brief load VS1xxx image with patch or plugin from file on SDcard.
+ *
+ * \param[in] fileName pointer of a char array (aka string), contianing the filename
+ * \param[out] address pointer of a 16-bit address
+ *
+ * Loads the VX10xx image with filename of the specified patch, if present.
+ * This can be used to load various VSdsp apps, patches and plug-in's.
+ * Providing many new features and updates not present on the default firmware.
+ *
+ * The file format of the image is raw binary, provided by VLSI.
+ *
+ * \note by default all images are expected to be in the root of the SdCard.
+ *
+ * \return Any Value other than zero indicates a problem occured.
+ * - 0 indicates that upload was successful.
+ * - 1 indicates the upload can not be performed while currently streaming music.
+ * - 2 indicates that there is error when accessing desired file.
+ * - 3 indicates that the VSdsp is in reset.
+ *
+ * \see
+ * - \ref Error_Codes
+ * - \ref Plug_Ins
+ */
+uint8_t vs1053::VSLoadImage(char *fileName, uint16_t *address) {
+  *address = 0xFFFF;
+  if (!digitalRead(MP3_RESET)) return 3;
+  if (isBusy()) return 1;
+  if (!digitalRead(MP3_RESET)) return 3;
+
+  if (!track.open(fileName, O_READ)) return 2; // Open the file in read mode.
+  
+  uint16_t offsets[] = {0x8000UL, 0x0, 0x4000UL};
+  uint8_t result = 2;
+  uint8_t temp[5];
+  uint16_t n, addr;
+  
+  if (!track.read(temp, 3) || (temp[0] != 'P') || (temp[1] != '&') || (temp[2] != 'H')) {
+    track.close();
+    return result;
+  }
+  
+  while (1) {
+    if (!track.read(temp, 5)) break; // read error
+    n = ((temp[1] << 8) | temp[2]) >> 1;
+    addr = (temp[3] << 8) | temp[4];
+    if (temp[0] >= 4) break; // Wrong type
+    else if (temp[0] == 3) { // Execute, done
+      *address = addr;
+      result = 0;
+      break;
+    }
+    
+    Mp3WriteRegister(SCI_WRAMADDR, addr + offsets[temp[0]]); // Address
+    while (n > 0) {
+      if(!track.read(temp, 2)) break; // Read error
+      Mp3WriteRegister(SCI_WRAM, (temp[0] << 8) | temp[1]); // Data
+      n--;
+    }
+    if (n) break;
+  }
+
+  track.close(); 
+  return result;
+}
+
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // @{
 // SelfTest_Group
@@ -388,7 +461,7 @@ uint8_t vs1053::VSLoadUserCode(char* fileName){
  */
 uint8_t vs1053::enableTestSineWave(uint8_t freq) {
 
-  if(isPlaying() || !digitalRead(MP3_RESET)) {
+  if(isBusy() || !digitalRead(MP3_RESET)) {
     Serial.println(F("Warning Tests are not available."));
     return -1;
   }
@@ -439,7 +512,7 @@ uint8_t vs1053::enableTestSineWave(uint8_t freq) {
  */
 uint8_t vs1053::disableTestSineWave() {
 
-  if(isPlaying() || !digitalRead(MP3_RESET)) {
+  if(isBusy() || !digitalRead(MP3_RESET)) {
     Serial.println(F("Warning Tests are not available."));
     return -1;
   }
@@ -494,7 +567,7 @@ uint8_t vs1053::disableTestSineWave() {
  */
 uint16_t vs1053::memoryTest() {
 
-  if(isPlaying() || !digitalRead(MP3_RESET)) {
+  if(isBusy() || !digitalRead(MP3_RESET)) {
     Serial.println(F("Warning Tests are not available."));
     return -1;
   }
@@ -1065,7 +1138,7 @@ uint8_t vs1053::playTrack(uint8_t trackNo){
  */
 uint8_t vs1053::playMP3(char* fileName, uint32_t timecode) {
 
-  if(isPlaying()) return 1;
+  if(isBusy()) return 1;
   if(!digitalRead(MP3_RESET)) return 3;
 
   //Open the file in read mode.
@@ -1085,10 +1158,10 @@ uint8_t vs1053::playMP3(char* fileName, uint32_t timecode) {
     }
   }
 
-  playing_state = playback;
-
   Mp3WriteRegister(SCI_DECODE_TIME, 0); // Reset the Decode and bitrate from previous play back.
   delay(100); // experimentally found that we need to let this settle before sending data.
+  
+  playing_state = playback;
 
   //gotta start feeding that hungry mp3 chip
   refill();
@@ -1126,16 +1199,237 @@ void vs1053::stopTrack(){
 
 //------------------------------------------------------------------------------
 /**
- * \brief Inidicate if a song is playing?
+ * \brief Begin recording an ogg file
  *
- * Public method for determining if a file is streaming to the VSdsp.
+ * \param[in] fileName output file name.
+ * \param[in] profileName profile name.
+ * \param[in] isStereo stereo (true, 2 channels) or mono (false, 1 channel).
+ *
+ * 1. Backup and set registers
+ * 2. Soft reset and disable interrupt except SCI
+ * 3. Load profile (053 or img)
+ * 4. Set recording related registers
+ * 5. Open output file for writing
+ * 6. Start recording
+ *
+ * \return Any Value other than zero indicates a problem occurred.
+ * where value indicates specific error
+ *
+ * \see
+ * \ref Error_Codes
+ */
+uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
+  if(isBusy()) return 1;
+  if(!digitalRead(MP3_RESET)) return 3;
+  
+  playing_state = loading;
+  registers_backup[0] = Mp3ReadRegister(SCI_CLOCKF);
+  registers_backup[1] = Mp3ReadRegister(SCI_BASS);
+  registers_backup[2] = Mp3ReadRegister(SCI_MODE);
+  
+  Mp3WriteRegister(SCI_CLOCKF, 0xC000); // Set multiplier to 4.5x
+  delay(100);
+  Mp3WriteRegister(SCI_BASS, 0); // Clear bass
+  Mp3WriteRegister(SCI_MODE, (registers_backup[2] | SM_RESET & ~SM_ADPCM)); // Soft reset
+  delay(100);
+  Mp3WriteRegister(SCI_AIADDR, 0); 
+  Mp3WriteWRAM(0xC01A, 0x02); // Disable all interrupts except SCI
+  
+#if defined(PROFILE_LOADER) && PROFILE_LOADER == IMG_LOADER
+  uint16_t addr;
+  if (VSLoadImage(profileName, &addr)) {
+#else
+  if (VSLoadUserCode(profileName)) {
+#endif
+    playing_state = ready;
+    Serial.print(F("Error: Load ")); Serial.print(profileName); Serial.println(F(" failed!"));
+    return 2;
+  }
+#if defined(PROFILE_LOADER) && PROFILE_LOADER == IMG_LOADER
+  Serial.print(F("Image address: $")); Serial.println(addr, HEX);
+#endif
+
+  int MP3Mode, MP3AICTRL0;
+  if (isStereo) {
+    MP3Mode = Mp3ReadRegister(SCI_MODE) | SM_ADPCM | SM_LAYER12;
+    MP3AICTRL0 = 0x8080;
+  } else {
+    MP3Mode = Mp3ReadRegister(SCI_MODE) | SM_ADPCM;
+    MP3AICTRL0 = 0x8000;
+  }
+  /* Set Input Mode to either Line1 or Microphone. */
+#if defined(VS_LINE1_MODE)
+  Mp3WriteRegister(SCI_MODE, (MP3Mode | SM_LINE1));
+#else
+  Mp3WriteRegister(SCI_MODE, (MP3Mode & ~SM_LINE1));
+#endif
+  Mp3WriteRegister(SCI_AICTRL0, MP3AICTRL0);
+  // Mp3WriteRegister(SCI_AICTRL0, 1024);
+  delay(100);
+  while(Mp3ReadRegister(SCI_AICTRL0) & MP3AICTRL0 != 0) delay(100);
+  Mp3WriteRegister(SCI_AICTRL1, 1024); // Recording gain 1x
+  Mp3WriteRegister(SCI_AICTRL2, 0); // Maximum AGC
+  Mp3WriteRegister(SCI_AICTRL3, 0);
+  
+  if(!track.open(fileName, O_CREAT | O_WRITE)) return 2; // Open the file in write mode.
+
+  Mp3WriteRegister(SCI_AIADDR, 0x34); // Start recording
+  delay(100);
+  while(!digitalRead(MP3_DREQ));
+  
+  playing_state = recording;
+
+  return 0;
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Write recording data to file which should be called periodically  
+ * during recording (e.g. in main loop) 
+ *
+ * 1. Check how many 16-bit words there are waiting in the VS1053 buffer 
+ * 2. Write to file if #waiting >= (WRITE_BUFFER_SIZE >> 1)
+ * 3. When stop recording is requested,
+ *    a. Do 1 and 2  
+ *    b. Check if VS1053 stopped
+ *    c. When VS1053 stopped, check if last word is in full or half
+ * 4. When writing data finished
+ *    a. Close the file  
+ *    b. Soft reset and restore registers 
+ *
+ * \return Any Value other than zero indicates a problem occurred.
+ * where value indicates specific error
+ *
+ * \see
+ * \ref Error_Codes
+ */
+uint8_t vs1053::writeOggInLoop() {
+  if ((playing_state != recording) && (playing_state != finishing)) return 1;
+
+  uint8_t result = 0;
+  bool finished = false;
+  uint16_t written = 0;
+  uint16_t waiting = Mp3ReadRegister(SCI_HDAT1);
+  // Serial.print("waiting: "); Serial.println(waiting);
+  
+  while (waiting >= (WRITE_BUFFER_SIZE >> 1)) {
+    for (uint16_t addr = 0; addr < WRITE_BUFFER_SIZE; addr += 2) {
+      union twobyte MP3HDAT0;
+      MP3HDAT0.word = Mp3ReadRegister(SCI_HDAT0);
+      mp3DataBuffer[addr] = MP3HDAT0.byte[1]; 
+      mp3DataBuffer[addr + 1] = MP3HDAT0.byte[0];
+    }
+    if (!track.write(mp3DataBuffer, WRITE_BUFFER_SIZE)) {
+      Serial.println(F("Error: write ogg failed when recording"));
+      finished = true; 
+      result = 2;
+      break;
+    }
+    written += WRITE_BUFFER_SIZE;
+    waiting -= (WRITE_BUFFER_SIZE >> 1);
+  }
+  
+  if (playing_state == finishing) {
+    while (!finished) {
+      if (Mp3ReadRegister(SCI_AICTRL3) & _BV(1)) {
+        finished = true;
+        Serial.println("VS1053 stopped"); 
+      }
+      waiting = Mp3ReadRegister(SCI_HDAT1);
+      // Serial.print("waiting2: "); Serial.println(waiting);
+      /* wrapping up the recording! */
+      while (waiting > 0) {
+        uint16_t size, addr;
+        if (waiting > (WRITE_BUFFER_SIZE >> 1)) {
+          size = WRITE_BUFFER_SIZE;
+        } else if (finished) {
+          size = (waiting - 1) << 1; // last word process later
+        } else {
+          size = waiting << 1;
+        }
+        
+        for (addr = 0; addr < size; addr += 2) {
+          union twobyte MP3HDAT0;
+          MP3HDAT0.word = Mp3ReadRegister(SCI_HDAT0);
+          mp3DataBuffer[addr] = MP3HDAT0.byte[1]; 
+          mp3DataBuffer[addr + 1] = MP3HDAT0.byte[0];
+        }
+        /* last word */
+        if (finished && waiting <= (WRITE_BUFFER_SIZE >> 1)) {
+          union twobyte MP3HDAT0;
+          MP3HDAT0.word = Mp3ReadRegister(SCI_HDAT0);
+          mp3DataBuffer[addr] = MP3HDAT0.byte[1]; 
+          Mp3ReadRegister(SCI_AICTRL3);
+          size++;
+          if (!(Mp3ReadRegister(SCI_AICTRL3) & _BV(2))) {
+            mp3DataBuffer[addr + 1] = MP3HDAT0.byte[0];
+            size++;
+            Serial.println("Full last word"); 
+          }
+          // Serial.print("waiting3: "); Serial.println(waiting);
+          // Serial.print("size: "); Serial.println(size);
+        }
+        if (!track.write(mp3DataBuffer, size)) {
+          Serial.println(F("Error: write ogg failed when finishing"));
+          finished = true; 
+          result = 2;
+          break;
+        }
+        written += size++;
+        waiting -= (size >> 1);
+        Serial.print("written0: "); Serial.println(written);
+        // Serial.print("waiting4: "); Serial.println(waiting);
+      }
+    }
+  }
+  
+  if (finished) {
+    track.close(); // Close out this track
+    
+    Mp3WriteRegister(SCI_CLOCKF, registers_backup[0]); // Restore multiplier
+    delay(100);
+    Mp3WriteRegister(SCI_BASS, registers_backup[1]); // Restore bass
+    Mp3WriteRegister(SCI_MODE, (Mp3ReadRegister(SCI_MODE) & ~SM_ADPCM | SM_RESET)); // Soft reset
+    delay(100);
+    Mp3WriteRegister(SCI_MODE, registers_backup[2]); // Restore mode
+    
+    playing_state = ready;
+    Serial.println(F("recording done"));
+  }
+  
+  Serial.print("written: "); Serial.println(written);
+  return result;
+}
+
+/**
+ * \brief Gracefully stop recording
+ *
+ * Skip if already not recording. 
+ */
+void vs1053::stopRecord(){
+  if((playing_state != recording) || !digitalRead(MP3_RESET)) return;
+
+  Mp3WriteRegister(SCI_AICTRL3, Mp3ReadRegister(SCI_AICTRL3) | _BV(0));
+  
+  playing_state = finishing;
+
+  Serial.println(F("Recording is finishing!"));
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Indicate if a track is playing or recording
+ *
+ * Public method for determining if a file is streaming to the VSdsp or VSdsp is
+ * doing encoding.
  *
  * \return
  * - 0 indicates \b NO file is currently being streamed to the VSdsp.
  * - 1 indicates that a file is currently being streamed to the VSdsp.
+ * - 2 indicates that VSdsp is doing encoding.
  * - 3 indicates that the VSdsp is in reset.
  */
-uint8_t vs1053::isPlaying(){
+uint8_t vs1053::isBusy(){
   uint8_t result;
 
   if(!digitalRead(MP3_RESET))
@@ -1144,6 +1438,10 @@ uint8_t vs1053::isPlaying(){
     result = 1;
   else if(getState() == paused_playback)
     result = 1;
+  else if(getState() == recording)
+    result = 2;
+  else if(getState() == finishing)
+    result = 2;
   else
     result = 0;
 
@@ -1277,7 +1575,7 @@ bool vs1053::resumeMusic() {
  */
 uint8_t vs1053::skip(int32_t timecode){
 
-  if(isPlaying() && digitalRead(MP3_RESET)) {
+  if(isBusy() && digitalRead(MP3_RESET)) {
 
     //stop interupt for now
     disableRefill();
@@ -1333,7 +1631,7 @@ uint8_t vs1053::skip(int32_t timecode){
  */
 uint8_t vs1053::skipTo(uint32_t timecode){
 
-  if(isPlaying() && digitalRead(MP3_RESET)) {
+  if(isBusy() && digitalRead(MP3_RESET)) {
 
     //stop interupt for now
     disableRefill();
@@ -1986,7 +2284,7 @@ void vs1053::refill() {
 
   while(digitalRead(MP3_DREQ)) {
 
-    if(!track.read(mp3DataBuffer, sizeof(mp3DataBuffer))) { //Go out to SD card and try reading 32 new bytes of the song
+    if(!track.read(mp3DataBuffer, READ_BUFFER_SIZE)) { //Go out to SD card and try reading 32 new bytes of the song
       track.close(); //Close out this track
       playing_state = ready;
 
@@ -2006,7 +2304,7 @@ void vs1053::refill() {
     cli(); // allow transfer to occur with out interruption.
 #endif
     dcs_low(); //Select Data
-    for(uint8_t y = 0 ; y < sizeof(mp3DataBuffer) ; y++) {
+    for(uint8_t y = 0 ; y < READ_BUFFER_SIZE; y++) {
       //while(!digitalRead(MP3_DREQ)); // wait until DREQ is or goes high // turns out it is not needed.
       SPI.transfer(mp3DataBuffer[y]); // Send SPI byte
     }
@@ -2198,8 +2496,7 @@ void vs1053::flush_cancel(flush_m mode) {
 uint8_t vs1053::ADMixerLoad(char* fileName){
 
   if(!digitalRead(MP3_RESET)) return 3;
-  if(isPlaying() != FALSE)
-    return 1;
+  if(isBusy()) return 1;
 
   playing_state = loading;
   if(VSLoadUserCode(fileName)) {
@@ -2297,6 +2594,7 @@ bool isFnMusic(char* filename) {
      || strstr(strlwr(filename + (len - 4)), ".wav")
      || strstr(strlwr(filename + (len - 4)), ".fla")
      || strstr(strlwr(filename + (len - 4)), ".mid")
+     || strstr(strlwr(filename + (len - 4)), ".ogg")
     ) {
     result = true;
   } else {

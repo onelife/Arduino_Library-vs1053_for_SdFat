@@ -33,12 +33,13 @@ getVolume	KEYWORD2
 getVUlevel	KEYWORD2
 getVUmeter	KEYWORD2
 isFnMusic	KEYWORD2
-isPlaying	KEYWORD2
+isBusy	KEYWORD2
 memoryTest	KEYWORD2
 pauseDataStream	KEYWORD2
 pauseMusic	KEYWORD2
 playMP3	KEYWORD2
 playTrack	KEYWORD2
+recordOgg	KEYWORD2
 resumeDataStream	KEYWORD2
 resumeMusic	KEYWORD2
 SendSingleMIDInote	KEYWORD2
@@ -55,11 +56,13 @@ setVolume	KEYWORD2
 setVUmeter	KEYWORD2
 skip	KEYWORD2
 skipTo	KEYWORD2
+stopRecord	KEYWORD2
 stopTrack	KEYWORD2
 trackAlbum	KEYWORD2
 trackArtist	KEYWORD2
 trackTitle	KEYWORD2
 vs_init	KEYWORD2
+writeOggInLoop	KEYWORD2
 
 
 #######################################
