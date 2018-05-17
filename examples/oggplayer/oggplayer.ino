@@ -352,7 +352,7 @@ void parse_menu(byte key_command) {
       }
     }
     Serial.print("Recording to "); Serial.println(filename);
-    in_recording = !OGGplayer.recordOgg(filename, "en44k2q5.053", true);
+    in_recording = !OGGplayer.recordOgg(filename, "en44k1q5.053", false);
 
   } else if(key_command == 'r') {
     OGGplayer.resumeMusic(2000);

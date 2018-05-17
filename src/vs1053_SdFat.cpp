@@ -1377,7 +1377,7 @@ uint8_t vs1053::writeOggInLoop() {
         }
         written += size++;
         waiting -= (size >> 1);
-        Serial.print("written0: "); Serial.println(written);
+        // Serial.print("written1: "); Serial.println(written);
         // Serial.print("waiting4: "); Serial.println(waiting);
       }
     }
@@ -1397,7 +1397,7 @@ uint8_t vs1053::writeOggInLoop() {
     Serial.println(F("recording done"));
   }
   
-  Serial.print("written: "); Serial.println(written);
+  // Serial.print("written: "); Serial.println(written);
   return result;
 }
 
