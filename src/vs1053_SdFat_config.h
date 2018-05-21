@@ -372,24 +372,19 @@ Support for Arduino Leonardo is afflicted by having the SPI pins not routing the
 
 //------------------------------------------------------------------------------
 /**
- * \def WRITE_BUFFER_SIZE
- * \brief The OGG write buffer size
+ * \def BUFFER_SIZE
+ * \brief The audio data buffer size
  */
-#define WRITE_BUFFER_SIZE   128
+#define BUFFER_SIZE 128
 
-//------------------------------------------------------------------------------
-/**
- * \def READ_BUFFER_SIZE
- * \brief The MP3 read buffer size
- */
-#define READ_BUFFER_SIZE    32
+#define SKIPPING_SPEED 8
 
 //------------------------------------------------------------------------------
 /**
  * \def PROFILE_LOADER
  * \brief The selection of recording profile loader.
  */
-#define PROFILE_LOADER PLG_LOADER
+#define PROFILE_LOADER IMG_LOADER
 
 /*
  * The profile loader types

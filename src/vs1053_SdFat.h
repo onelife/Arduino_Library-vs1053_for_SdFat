@@ -33,17 +33,30 @@
 enum state_m {
   uninitialized,
   initialized,
-  deactivated,
   loading,
   ready,
   playback,
   playMIDIbeep,
   paused_playback,
+  cancelling,
+  skipping,
   recording,
   finishing,
   testing_memory,
   testing_sinewave,
-  }; //enum state_m
+}; //enum state_m
+
+enum format_m {
+  mp3,
+  aac,
+  wma,
+  wav,
+  fla,
+  mid,
+  ogg,
+  supportedFormat,
+  unknownFormat,
+}; //format_m
 
 /** \brief How to flush the VSdsp's buffer
  *
@@ -615,6 +628,8 @@ extern SdFat sd;
  */
 #define para_resync         0x1E29
 
+#define para_interrupt      0xC01A
+
 /** End Extra_Parameter_Group
  *  /@}
  */
@@ -688,15 +703,16 @@ class vs1053 {
     state_m getState();
     void setEarSpeaker(uint16_t);
     uint16_t getMonoMode();
-    void setMonoMode(uint16_t );
+    void setMonoMode(bool);
     void setDifferentialOutput(uint16_t);
     uint8_t getDifferentialOutput();
     uint8_t playTrack(uint8_t);
-    uint8_t playMP3(char*, uint32_t timecode = 0);
+    uint8_t play(char*, uint32_t timecode = 0);
     void trackTitle(char*);
     void trackArtist(char*);
     void trackAlbum(char*);
-    void stopTrack();
+    uint32_t getDuration();
+    void stop();
     uint8_t recordOgg(char*, char*, bool);
     uint8_t writeOggInLoop();
     void stopRecord();
@@ -705,11 +721,8 @@ class vs1053 {
     uint8_t skipTo(uint32_t);
     uint32_t currentPosition();
     void setBitRate(uint16_t);
-    void pauseDataStream();
-    void resumeDataStream();
     void pauseMusic();
-    bool resumeMusic();
-    uint8_t resumeMusic(uint32_t);
+    uint8_t resumeMusic(uint32_t timecode=0xFFFFFFFF);
     static void available();
     void getAudioInfo();
     uint8_t enableTestSineWave(uint8_t);
@@ -725,26 +738,30 @@ class vs1053 {
   private:
     static SdFile track;
     static void refill();
+    static void cancelDecoding(bool, uint8_t fillingByte=0x00);
+    static void fillEnd(uint8_t);
     static void flush_cancel(flush_m);
-    static void spiInit();
-    static void cs_low();
+    static void spiInit(bool);
+    static void cs_low(bool toWrite=true);
     static void cs_high();
-    static void dcs_low();
+    static void dcs_low(bool toWrite=true);
     static void dcs_high();
     static void Mp3WriteRegister(uint8_t, uint8_t, uint8_t);
     static void Mp3WriteRegister(uint8_t, uint16_t);
-    static uint16_t Mp3ReadRegister (uint8_t);
-    static uint16_t Mp3ReadWRAM(uint16_t);
-    static void Mp3WriteWRAM(uint16_t, uint16_t);
+    static uint16_t Mp3ReadRegister(uint8_t);
+    static void Mp3ReadWRAM(uint16_t, uint16_t*, uint32_t length=1, bool is32bit=false);
+    static void Mp3WriteWRAM(uint16_t, uint16_t*, uint32_t length=1, bool is32bit=false);
     void getTrackInfo(uint8_t, char*);
     static void enableRefill();
     static void disableRefill();
     void getBitRateFromMP3File(char*);
+    void getOggInfo();
     uint8_t VSLoadUserCode(char*);
     uint8_t VSLoadImage(char*, uint16_t*);
 
-    //Create the variables to be used by SdFat Library
-
+    static bool isPatched;
+    static bool isSkipping;
+    
 /** \brief Boolean flag indicating if filehandle is streaming.*/
     static state_m playing_state;
 
@@ -753,14 +770,17 @@ class vs1053 {
     static uint16_t spi_Write_Rate;
 
 /** \brief Buffer for moving data between Filehandle and VSdsp.*/
-#if WRITE_BUFFER_SIZE >= READ_BUFFER_SIZE
-    static uint8_t mp3DataBuffer[WRITE_BUFFER_SIZE];
-#else
-    static uint8_t mp3DataBuffer[READ_BUFFER_SIZE];
-#endif
+    static uint8_t mp3DataBuffer[BUFFER_SIZE];
+    static uint16_t bufferOffset;
 
     static uint16_t registers_backup[3];
-
+    
+    static format_m trackFormat;
+/** \brief contains a local value of the current track estimate playable duration in second.*/
+    static uint16_t duration;
+    static uint16_t position;
+    static uint16_t skipToPosition;
+    
 /** \brief contains a local value of the beleived current bit-rate.*/
     uint8_t bitrate;
 
@@ -768,10 +788,10 @@ class vs1053 {
     uint32_t start_of_music;
 
 /** \brief contains a local value of the VSdsp's master volume left channels*/
-    uint8_t VolL;
+    static uint8_t VolL;
 
 /** \brief contains a local value of the VSdsp's master volume Right channels*/
-    uint8_t VolR;
+    static uint8_t VolR;
 
 /**
  * \brief A handler for accessing nibbles of the SCI_BASS word.
@@ -807,7 +827,8 @@ union sci_bass_m {
  * Global Functions
  */
 char* strip_nonalpha_inplace(char *s);
-bool isFnMusic(char*);
+format_m getTrackFormat(uint8_t*);
+bool isFormat(format_m, uint8_t*);
 
 //------------------------------------------------------------------------------
 /*

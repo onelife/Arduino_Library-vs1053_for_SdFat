@@ -173,7 +173,7 @@ void loop() {
       while (file.openNext(sd.vwd(),O_READ))
       {
         file.getName(filename, sizeof(filename));
-        if ( isFnMusic(filename) ) {
+        if ( isFormat(supportedFormat, filename) ) {
 
           if (count == fn_index) {
             Serial.print(F("Index "));
@@ -182,7 +182,7 @@ void loop() {
             Serial.println(filename);
             Serial.print(F("Playing filename: "));
             Serial.println(filename);
-            int8_t result = OGGplayer.playMP3(filename);
+            int8_t result = OGGplayer.play(filename);
             //check result, see readme for error codes.
             if(result != 0) {
               Serial.print(F("Error code: "));
@@ -234,10 +234,10 @@ void parse_menu(byte key_command) {
     switch (OGGplayer.getState()) {
     case playback:
     case paused_playback:
-      OGGplayer.stopTrack();
+      OGGplayer.stop();
       break;
     case recording:
-      OGGplayer.stopRecord();
+      OGGplayer.stop();
       break;
     }
 
@@ -306,9 +306,6 @@ void parse_menu(byte key_command) {
     case initialized:
       Serial.print(F("initialized"));
       break;
-    case deactivated:
-      Serial.print(F("deactivated"));
-      break;
     case loading:
       Serial.print(F("loading"));
       break;
@@ -320,6 +317,12 @@ void parse_menu(byte key_command) {
       break;
     case paused_playback:
       Serial.print(F("paused_playback"));
+      break;
+    case cancelling:
+      Serial.print(F("cancelling"));
+      break;
+    case skipping:
+      Serial.print(F("skipping"));
       break;
     case recording:
       Serial.print(F("recording"));
@@ -358,7 +361,7 @@ void parse_menu(byte key_command) {
     OGGplayer.resumeMusic(2000);
 
   } else if(key_command == 'R') {
-    OGGplayer.stopTrack();
+    OGGplayer.stop();
     OGGplayer.vs_init();
     Serial.println(F("Resetting VS10xx chip"));
 
@@ -407,7 +410,7 @@ void parse_menu(byte key_command) {
       while (file.openNext(sd.vwd(),O_READ))
       {
         file.getName(filename, sizeof(filename));
-        if ( isFnMusic(filename) ) {
+        if ( isFormat(supportedFormat, filename) ) {
           SerialPrintPaddedNumber(count, 5 );
           Serial.print(F(": "));
           Serial.println(filename);

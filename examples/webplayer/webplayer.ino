@@ -262,7 +262,7 @@ void loop()
 
             //PLAY
             if (strstr(get_arg, "PLAY") != 0) {
-              result = MP3player.playMP3(filename);
+              result = MP3player.play(filename);
               if(result != 0) {
                 Serial.print(F("Error code: "));
                 Serial.print(result);
@@ -271,7 +271,7 @@ void loop()
 
             // STOP
             } else if (strstr(get_arg, "STOP") != 0) {
-              MP3player.stopTrack();
+              MP3player.stop();
 
             //PAUSE
             } else if (strstr(get_arg, "PAUSE") != 0) {

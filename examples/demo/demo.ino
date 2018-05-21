@@ -163,7 +163,7 @@ void parse_menu(byte key_command) {
   //if s, stop the current track
   if(key_command == 's') {
     Serial.println(F("Stopping"));
-    MP3player.stopTrack();
+    MP3player.stop();
 
   //if 1-9, play corresponding track
   } else if(key_command >= '1' && key_command <= '9') {
@@ -249,7 +249,7 @@ void parse_menu(byte key_command) {
     Serial.print(F("playspeed to "));
     Serial.println(playspeed, DEC);
 
-  /* Alterativly, you could call a track by it's file name by using playMP3(filename);
+  /* Alterativly, you could call a track by it's file name by using play(filename);
   But you must stick to 8.1 filenames, only 8 characters long, and 3 for the extension */
   } else if(key_command == 'f' || key_command == 'F') {
     uint32_t offset = 0;
@@ -264,7 +264,7 @@ void parse_menu(byte key_command) {
     sd.chvol(); // assign desired sdcard's volume.
 #endif
     //tell the MP3 Shield to play that file
-    result = MP3player.playMP3(trackName, offset);
+    result = MP3player.play(trackName, offset);
     //check result, see readme for error codes.
     if(result != 0) {
       Serial.print(F("Error code: "));
@@ -323,9 +323,6 @@ void parse_menu(byte key_command) {
     case initialized:
       Serial.print(F("initialized"));
       break;
-    case deactivated:
-      Serial.print(F("deactivated"));
-      break;
     case loading:
       Serial.print(F("loading"));
       break;
@@ -337,6 +334,12 @@ void parse_menu(byte key_command) {
       break;
     case paused_playback:
       Serial.print(F("paused_playback"));
+      break;
+    case cancelling:
+      Serial.print(F("cancelling"));
+      break;
+    case skipping:
+      Serial.print(F("skipping"));
       break;
     case testing_memory:
       Serial.print(F("testing_memory"));
@@ -382,7 +385,7 @@ void parse_menu(byte key_command) {
     MP3player.resumeMusic(2000);
 
   } else if(key_command == 'R') {
-    MP3player.stopTrack();
+    MP3player.stop();
     MP3player.vs_init();
     Serial.println(F("Reseting VS10xx chip"));
 

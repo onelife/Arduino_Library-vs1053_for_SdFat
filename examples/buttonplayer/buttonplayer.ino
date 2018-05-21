@@ -141,7 +141,7 @@ void loop() {
     if (b_Stop.read() == LOW)	{
       Serial.print(F("B_STOP pressed, Stopping Track #"));
       Serial.println(current_track);
-      MP3player.stopTrack();
+      MP3player.stop();
     }
   }
 
@@ -149,7 +149,7 @@ void loop() {
     if (b_Next.read() == LOW)	{
       Serial.print(F("B_NEXT pressed, Start Playing Next Track #"));
       Serial.println(++current_track);
-      MP3player.stopTrack();
+      MP3player.stop();
       MP3player.playTrack(current_track);
     }
   }
