@@ -628,7 +628,11 @@ extern SdFat sd;
  */
 #define para_resync         0x1E29
 
-#define para_interrupt      0xC01A
+#define para_interrupt          0xC01A
+
+#define para_recordingTime_0    0x0008
+
+#define para_recordingTime_1    0x0009
 
 /** End Extra_Parameter_Group
  *  /@}
@@ -716,6 +720,7 @@ class vs1053 {
     uint8_t recordOgg(char*, char*, bool);
     uint8_t writeOggInLoop();
     void stopRecord();
+    uint16_t getRecordingLevel();
     uint8_t isBusy();
     uint8_t skip(int32_t);
     uint8_t skipTo(uint32_t);
@@ -741,6 +746,7 @@ class vs1053 {
     static void cancelDecoding(bool, uint8_t fillingByte=0x00);
     static void fillEnd(uint8_t);
     static void flush_cancel(flush_m);
+    static uint8_t oggRefill();
     static void spiInit(bool);
     static void cs_low(bool toWrite=true);
     static void cs_high();
@@ -749,11 +755,11 @@ class vs1053 {
     static void Mp3WriteRegister(uint8_t, uint8_t, uint8_t);
     static void Mp3WriteRegister(uint8_t, uint16_t);
     static uint16_t Mp3ReadRegister(uint8_t);
-    static void Mp3ReadWRAM(uint16_t, uint16_t*, uint32_t length=1, bool is32bit=false);
-    static void Mp3WriteWRAM(uint16_t, uint16_t*, uint32_t length=1, bool is32bit=false);
+    static uint32_t Mp3ReadWRAM(uint16_t, bool is32bit=false);
+    static void Mp3WriteWRAM(uint16_t, uint32_t, bool is32bit=false);
     void getTrackInfo(uint8_t, char*);
-    static void enableRefill();
-    static void disableRefill();
+    static void enableRefill(bool isRecording=false);
+    static void disableRefill(bool isRecording=false);
     void getBitRateFromMP3File(char*);
     void getOggInfo();
     uint8_t VSLoadUserCode(char*);
@@ -778,8 +784,10 @@ class vs1053 {
     static format_m trackFormat;
 /** \brief contains a local value of the current track estimate playable duration in second.*/
     static uint16_t duration;
-    static uint16_t position;
+    static uint32_t position;
     static uint16_t skipToPosition;
+    static bool isRecordingStereo;
+    static uint16_t recordingLevel;
     
 /** \brief contains a local value of the beleived current bit-rate.*/
     uint8_t bitrate;

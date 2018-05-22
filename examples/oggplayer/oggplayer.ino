@@ -1,5 +1,5 @@
 /**
- * \file oggplayer.ino
+ * \file OggPlayer.ino
  *
  * \brief Example sketch of using the "MP3 shield board with TF card" with modified 
  * "Arduino_Library-vs1053_for_SdFat" to record and play ogg files
@@ -49,7 +49,7 @@ int8_t buffer_pos; // next position to recieve character from Serial port.
 /**
  * \brief Boolean instancing the recording is in progress.
  */
-bool in_recording = false;
+format_m trackFormat;
 
 //------------------------------------------------------------------------------
 /**
@@ -182,6 +182,7 @@ void loop() {
             Serial.println(filename);
             Serial.print(F("Playing filename: "));
             Serial.println(filename);
+            trackFormat = getTrackFormat(filename);
             int8_t result = OGGplayer.play(filename);
             //check result, see readme for error codes.
             if(result != 0) {
@@ -202,11 +203,15 @@ void loop() {
     buffer_pos = 0;
     buffer[buffer_pos] = 0; // delimit
   }
-
-  if (in_recording) {
-    in_recording = !OGGplayer.writeOggInLoop();
+  
+  state_m state = OGGplayer.getState();
+  if ((state == recording) || (state == finishing)) {
+#if !defined(OGG_REFILL_USING_TIMER)
+    OGGplayer.writeOggInLoop();
+#endif
+    delay(15);
   } else {
-    delay(100);
+    delay(200);
   }
 }
 
@@ -237,7 +242,7 @@ void parse_menu(byte key_command) {
       OGGplayer.stop();
       break;
     case recording:
-      OGGplayer.stop();
+      OGGplayer.stopRecord();
       break;
     }
 
@@ -265,6 +270,28 @@ void parse_menu(byte key_command) {
     Serial.print(F("Volume changed to -"));
     Serial.print(mp3_vol.byte[1]>>1, 1);
     Serial.println(F("[dB]"));
+
+  //if < or > to change Play Speed
+  } else if((key_command == '>') || (key_command == '<')) {
+    uint16_t playspeed = OGGplayer.getPlaySpeed(); // create key_command existing variable
+    // note playspeed of Zero is equal to ONE, normal speed.
+    if(key_command == '>') { // note dB is negative
+      // assume equal balance and use byte[1] for math
+      if(playspeed >= 254) { // range check
+        playspeed = 5;
+      } else {
+        playspeed += 1; // keep it simpler with whole dB's
+      }
+    } else {
+      if(playspeed == 0) { // range check
+        playspeed = 0;
+      } else {
+        playspeed -= 1;
+      }
+    }
+    OGGplayer.setPlaySpeed(playspeed); // commit new playspeed
+    Serial.print(F("playspeed to "));
+    Serial.println(playspeed, DEC);
 
   /* Display the file on the SdCard */
   } else if(key_command == 'd') {
@@ -355,7 +382,7 @@ void parse_menu(byte key_command) {
       }
     }
     Serial.print("Recording to "); Serial.println(filename);
-    in_recording = !OGGplayer.recordOgg(filename, "en44k1q5.053", false);
+    OGGplayer.recordOgg(filename, "v44k1q05.img", false);
 
   } else if(key_command == 'r') {
     OGGplayer.resumeMusic(2000);
@@ -366,11 +393,11 @@ void parse_menu(byte key_command) {
     Serial.println(F("Resetting VS10xx chip"));
 
   } else if(key_command == 'g') {
-    int32_t offset_ms = 20000; // Note this is just an example, try your own number.
+    int32_t offset_sec = 10; // Note this is just an example, try your own number.
     Serial.print(F("jumping to "));
-    Serial.print(offset_ms, DEC);
-    Serial.println(F("[milliseconds]"));
-    result = OGGplayer.skipTo(offset_ms);
+    Serial.print(offset_sec, DEC);
+    Serial.println(F("[seconds]"));
+    result = OGGplayer.skipTo(offset_sec);
     if(result != 0) {
       Serial.print(F("Error code: "));
       Serial.print(result);
@@ -378,11 +405,12 @@ void parse_menu(byte key_command) {
     }
 
   } else if(key_command == 'k') {
-    int32_t offset_ms = -1000; // Note this is just an example, try your own number.
+    int32_t offset_sec = -5; 
+    // int32_t offset_sec = 5; 
     Serial.print(F("moving = "));
-    Serial.print(offset_ms, DEC);
-    Serial.println(F("[milliseconds]"));
-    result = OGGplayer.skip(offset_ms);
+    Serial.print(offset_sec, DEC);
+    Serial.println(F("[seconds]"));
+    result = OGGplayer.skip(offset_sec);
     if(result != 0) {
       Serial.print(F("Error code: "));
       Serial.print(result);

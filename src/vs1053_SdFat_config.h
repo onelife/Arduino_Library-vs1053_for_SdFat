@@ -370,6 +370,13 @@ Support for Arduino Leonardo is afflicted by having the SPI pins not routing the
 #define MP3_REFILL_PERIOD 100
 #endif
 
+#define OGG_REFILL_USING_TIMER
+
+#if defined(OGG_REFILL_USING_TIMER)
+  #include <TimerOne.h>
+  #define OGG_REFILL_PERIOD 15000
+#endif
+
 //------------------------------------------------------------------------------
 /**
  * \def BUFFER_SIZE

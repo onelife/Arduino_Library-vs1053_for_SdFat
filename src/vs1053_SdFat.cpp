@@ -12,9 +12,13 @@
 //avr pgmspace library for storing the LUT in program flash instead of sram
 #include <avr/pgmspace.h>
 
-static uint32_t cntIsr = 0;
-static uint32_t cntRead = 0;
-static uint32_t cntWork = 0;
+#define DEBUG 0
+
+#if DEBUG
+  static uint32_t cntIsr;
+  static uint32_t cntRead;
+  static uint32_t cntWork;
+#endif
 
 /**
  * \brief bitrate lookup table
@@ -110,8 +114,10 @@ uint16_t vs1053::spi_Write_Rate = SPI_CLOCK_DIV16;
 
 format_m vs1053::trackFormat;
 uint16_t vs1053::duration;
-uint16_t vs1053::position;
+uint32_t vs1053::position;
 uint16_t vs1053::skipToPosition;
+bool vs1053::isRecordingStereo;
+uint16_t vs1053::recordingLevel;
 
 uint8_t vs1053::VolL = 0x30;
 uint8_t vs1053::VolR = 0x30;
@@ -178,6 +184,10 @@ uint8_t  vs1053::begin() {
 
   uint8_t result = vs_init();
   if (result) return result;
+
+#if defined(OGG_REFILL_USING_TIMER)
+  Timer1.initialize();
+#endif
 
 #if defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_Timer1
   Timer1.initialize(MP3_REFILL_PERIOD);
@@ -855,8 +865,7 @@ void vs1053::setBassAmplitude(uint8_t amplitude) {
  * SdCard, Arduino and VS10xx may result in erratic behavior.
  */
 uint16_t vs1053::getPlaySpeed() {
-  uint16_t data; Mp3ReadWRAM(para_playSpeed, &data);
-  return data;
+  return Mp3ReadWRAM(para_playSpeed);
 }
 
 //------------------------------------------------------------------------------
@@ -875,7 +884,7 @@ uint16_t vs1053::getPlaySpeed() {
  * SdCard, Arduino and VS10xx may result in erratic behavior.
  */
 void vs1053::setPlaySpeed(uint16_t data) {
-  Mp3WriteWRAM(para_playSpeed, &data);
+  Mp3WriteWRAM(para_playSpeed, data);
 }
 // @}
 //PlaySpeed_Group
@@ -1013,8 +1022,7 @@ void vs1053::setDifferentialOutput(uint16_t DiffMode) {
  * is loaded into the VSdsp.
  */
 uint16_t vs1053::getMonoMode() {
-  uint16_t data; Mp3ReadWRAM(para_MonoOutput, &data);
-  return (data & 0x0001);
+  return (Mp3ReadWRAM(para_MonoOutput) & 0x0001);
 }
 
 //------------------------------------------------------------------------------
@@ -1029,9 +1037,9 @@ uint16_t vs1053::getMonoMode() {
  * is loaded into the VSdsp.
  */
 void vs1053::setMonoMode(bool mono) {
-  uint16_t data; Mp3ReadWRAM(para_MonoOutput, &data);
+  uint16_t data = Mp3ReadWRAM(para_MonoOutput);
   data = mono ? (data | 0x0001) : (data & ~0x0001);
-  Mp3WriteWRAM(para_MonoOutput, &data);
+  Mp3WriteWRAM(para_MonoOutput, data);
 }
 // @}
 // Stereo_Group
@@ -1104,7 +1112,7 @@ uint8_t vs1053::play(char* fileName, uint32_t timecode) {
     delay(1);
     isPatched = true;
   }
-
+  
   /* Initialize track */
   if(!track.open(fileName, O_READ)) return 2;
   trackFormat = getTrackFormat(fileName);
@@ -1152,9 +1160,13 @@ void vs1053::stop(){
   Serial.println(F("Stopping track"));
 }
 
+uint16_t vs1053::getRecordingLevel() {
+  return recordingLevel;
+}
+
 //------------------------------------------------------------------------------
 /**
- * \brief Begin recording an ogg file
+ * \brief Begin recording an OGG file
  *
  * \param[in] fileName output file name.
  * \param[in] profileName profile name.
@@ -1188,7 +1200,7 @@ uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
   delay(10);
   isPatched = false;
   Mp3WriteRegister(SCI_AIADDR, 0); 
-  uint16_t data = 0x02; Mp3WriteWRAM(para_interrupt, &data); // Disable all interrupts except SCI
+  Mp3WriteWRAM(para_interrupt, 0x02); // Disable all interrupts except SCI
   
 #if defined(PROFILE_LOADER) && PROFILE_LOADER == IMG_LOADER
   uint16_t addr;
@@ -1204,24 +1216,24 @@ uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
   Serial.print(F("Image at: $")); Serial.println(addr, HEX);
 #endif
 
-  int MP3Mode, MP3AICTRL0;
+  int sciMODE, sciAICTRL0;
   if (isStereo) {
-    MP3Mode = Mp3ReadRegister(SCI_MODE) | SM_ADPCM | SM_LAYER12;
-    MP3AICTRL0 = 0x8080;
+    sciMODE = Mp3ReadRegister(SCI_MODE) | SM_ADPCM | SM_LAYER12;
+    sciAICTRL0 = 0x8080;
   } else {
-    MP3Mode = Mp3ReadRegister(SCI_MODE) | SM_ADPCM;
-    MP3AICTRL0 = 0x8000;
+    sciMODE = Mp3ReadRegister(SCI_MODE) | SM_ADPCM;
+    sciAICTRL0 = 0x8000;
   }
+  isRecordingStereo = isStereo;
   /* Set Input Mode to either Line1 or Microphone. */
 #if defined(VS_LINE1_MODE)
-  Mp3WriteRegister(SCI_MODE, (MP3Mode | SM_LINE1));
+  Mp3WriteRegister(SCI_MODE, (sciMODE | SM_LINE1));
 #else
-  Mp3WriteRegister(SCI_MODE, (MP3Mode & ~SM_LINE1));
+  Mp3WriteRegister(SCI_MODE, (sciMODE & ~SM_LINE1));
 #endif
-  Mp3WriteRegister(SCI_AICTRL0, MP3AICTRL0);
-  // Mp3WriteRegister(SCI_AICTRL0, 1024);
+  Mp3WriteRegister(SCI_AICTRL0, sciAICTRL0);
   delay(30);
-  while(Mp3ReadRegister(SCI_AICTRL0) & MP3AICTRL0 != 0) delay(30);
+  while(Mp3ReadRegister(SCI_AICTRL0) & sciAICTRL0 != 0) delay(30);
   Mp3WriteRegister(SCI_AICTRL1, 1024); // Recording gain 1x
   Mp3WriteRegister(SCI_AICTRL2, 0); // Maximum AGC
   Mp3WriteRegister(SCI_AICTRL3, 0);
@@ -1233,7 +1245,7 @@ uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
   while(!digitalRead(MP3_DREQ));
   
   playing_state = recording;
-
+  enableRefill(true);
   return 0;
 }
 
@@ -1259,9 +1271,20 @@ uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
  * \ref Error_Codes
  */
 uint8_t vs1053::writeOggInLoop() {
-  if (isBusy() != 0x02) return 1;
+  uint8_t busy = isBusy();
+  if ((busy != 0x02) && (busy != 0x04)) return 1;
+  return oggRefill();
+}
 
+uint8_t vs1053::oggRefill() {
+#if DEBUG
+  uint32_t position2 = position;
+  cntIsr++;
+#endif
   uint8_t result = 0;
+  const uint16_t mask = isRecordingStereo ? 0x8080 : 0x8000;
+  static uint8_t readRecordingLevel = 0;
+  static unsigned long millis_prv;
   bool finished = false;
   uint16_t written = 0;
   uint16_t waiting = Mp3ReadRegister(SCI_HDAT1);
@@ -1275,16 +1298,20 @@ uint8_t vs1053::writeOggInLoop() {
       mp3DataBuffer[addr + 1] = sciHDAT0.byte[0];
     }
     if (!track.write(mp3DataBuffer, sizeof(mp3DataBuffer))) {
-      Serial.println(F("Error: write ogg failed when recording"));
+      Serial.println(F("Error: write OGG failed when recording"));
       finished = true; 
       result = 2;
       break;
     }
     written += sizeof(mp3DataBuffer);
     waiting -= (sizeof(mp3DataBuffer) >> 1);
+#if DEBUG
+    cntWork++;
+#endif
   }
   
   if (playing_state == finishing) {
+    Mp3WriteRegister(SCI_AICTRL3, Mp3ReadRegister(SCI_AICTRL3) | _BV(0)); // Stop
     while (!finished) {
       if (Mp3ReadRegister(SCI_AICTRL3) & _BV(1)) {
         finished = true;
@@ -1311,7 +1338,6 @@ uint8_t vs1053::writeOggInLoop() {
         }
         /* last word */
         if (finished && waiting <= (sizeof(mp3DataBuffer) >> 1)) {
-          // TODO: add 2 more bytes in buffer
           union twobyte sciHDAT0;
           sciHDAT0.word = Mp3ReadRegister(SCI_HDAT0);
           mp3DataBuffer[addr] = sciHDAT0.byte[1]; 
@@ -1326,7 +1352,7 @@ uint8_t vs1053::writeOggInLoop() {
           // Serial.print("size: "); Serial.println(size);
         }
         if (!track.write(mp3DataBuffer, size)) {
-          Serial.println(F("Error: write ogg failed when finishing"));
+          Serial.println(F("Error: write OGG failed when finishing"));
           finished = true; 
           result = 2;
           break;
@@ -1335,11 +1361,48 @@ uint8_t vs1053::writeOggInLoop() {
         waiting -= (size >> 1);
         // Serial.print("written1: "); Serial.println(written);
         // Serial.print("waiting4: "); Serial.println(waiting);
+#if DEBUG
+        cntWork++;
+#endif
       }
     }
   }
   
+  /* Get position */
+  position = Mp3ReadWRAM(para_recordingTime_0, true);
+  /* Get recording level */
+  switch (readRecordingLevel) {
+    default:
+    case 0:
+      Mp3WriteRegister(SCI_AICTRL0, mask);
+      millis_prv = millis();
+      readRecordingLevel = 1;
+      break;
+    case 1:
+      {
+        unsigned long millis_cur = millis();
+        if ((millis_cur - millis_prv) >= 25) { // Waiting at least 1/50 second
+          uint16_t temp = Mp3ReadRegister(SCI_AICTRL0);
+          if (!(temp & mask)) {
+            recordingLevel = temp;
+          }
+          millis_prv = millis_cur;
+          readRecordingLevel = 2;
+        }
+      }
+      break;
+    case 2:
+      {
+        unsigned long millis_cur = millis();
+        if ((millis_cur - millis_prv) >= 500) { // Waiting at least 1/2 second
+          readRecordingLevel = 0;
+        }
+      }
+      break;
+  }
+  
   if (finished) {
+    disableRefill(true);
     track.close(); // Close out this track
     
     Mp3WriteRegister(SCI_CLOCKF, registers_backup[0]); // Restore multiplier
@@ -1355,6 +1418,17 @@ uint8_t vs1053::writeOggInLoop() {
   }
   
   // Serial.print("written: "); Serial.println(written);
+#if DEBUG
+  if(position2 != position) {
+    Serial.print(F("position ")); Serial.println(position);
+    Serial.print(F("recordingLevel ")); Serial.println(recordingLevel);
+    Serial.print(F("cntIsr ")); Serial.println(cntIsr);
+    Serial.print(F("cntWork ")); Serial.println(cntWork);
+    Serial.print(F("rate ")); Serial.println(1.0 * cntWork / cntIsr * 100);
+    cntIsr = 0;
+    cntWork = 0;
+  }
+#endif
   return result;
 }
 
@@ -1364,9 +1438,8 @@ uint8_t vs1053::writeOggInLoop() {
  * Skip if already not recording. 
  */
 void vs1053::stopRecord(){
-  if ((playing_state != recording) || !digitalRead(MP3_RESET)) return;
+  if (isBusy() != 0x02) return;
 
-  Mp3WriteRegister(SCI_AICTRL3, Mp3ReadRegister(SCI_AICTRL3) | _BV(0));
   playing_state = finishing;
   Serial.println(F("Recording is finishing!"));
 }
@@ -1395,12 +1468,14 @@ uint8_t vs1053::isBusy(){
         result = 0x01;
         break;
       case recording:
-      case finishing:
         result = 0x02;
         break;
       case cancelling:
       case skipping:
         result = 0x03;
+        break;
+      case finishing:
+        result = 0x04;
         break;
       default:
         result = 0x00;
@@ -1458,8 +1533,7 @@ uint8_t vs1053::resumeMusic(uint32_t timecode=0xFFFFFFFF) {
   if ((playing_state != paused_playback) || !digitalRead(MP3_RESET)) return 1;
 
   if (timecode != 0xFFFFFFFF) {
-    uint16_t data; Mp3ReadWRAM(para_byteRate, &data);
-    if (!track.seekSet(timecode * data / 1000 + start_of_music)) return 2;
+    if (!track.seekSet(timecode * Mp3ReadWRAM(para_byteRate) / 1000 + start_of_music)) return 2;
   }
 
   enableRefill();
@@ -1496,8 +1570,7 @@ uint8_t vs1053::skip(int32_t seconds) {
       targetPosition = position + seconds;
     }
   } else {
-    uint16_t data; Mp3ReadWRAM(para_byteRate, &data);
-    targetPosition = (track.curPosition() - start_of_music) / data + seconds;
+    targetPosition = (track.curPosition() - start_of_music) / Mp3ReadWRAM(para_byteRate) + seconds;
   }
   return skipTo(targetPosition);
 }
@@ -1539,8 +1612,7 @@ uint8_t vs1053::skipTo(uint32_t seconds) {
 
     // try to set the files position to current position + offset(in bytes)
     // as calculated from current byte rate, as per VSdsp.
-    uint16_t data; Mp3ReadWRAM(para_byteRate, &data);
-    if(!track.seekSet(seconds * data + start_of_music)) return 2; // skip to X ms.
+    if(!track.seekSet(seconds * Mp3ReadWRAM(para_byteRate) + start_of_music)) return 2; // skip to X ms.
 
     Mp3WriteRegister(SCI_VOL, 0xFE, 0xFE);
     //seeked successfully
@@ -1748,20 +1820,20 @@ void vs1053::getAudioInfo() {
   Serial.print(F("\t0x"));
   Serial.print(MP3Clock, HEX);
 
-  uint16_t data; Mp3ReadWRAM(para_version, &data);
+  uint16_t MP3para_version = Mp3ReadWRAM(para_version);
   Serial.print(F("\t0x"));
-  Serial.print(data, HEX);
+  Serial.print(MP3para_version, HEX);
 
-  Mp3ReadWRAM(para_byteRate, &data);
+  uint16_t MP3ByteRate = Mp3ReadWRAM(para_byteRate);
   Serial.print(F("\t\t"));
-  Serial.print(data, HEX);
+  Serial.print(MP3ByteRate, HEX);
 
   Serial.print(F("\t\t"));
-  Serial.print((data>>7), DEC); // shift 7 is the same as *8/1024, and easier math.
+  Serial.print((MP3ByteRate>>7), DEC); // shift 7 is the same as *8/1024, and easier math.
 
-  Mp3ReadWRAM(para_playSpeed, &data);
+  uint16_t MP3playSpeed = Mp3ReadWRAM(para_playSpeed);
   Serial.print(F("\t\t"));
-  Serial.print(data, HEX);
+  Serial.print(MP3playSpeed, HEX);
 
   uint16_t MP3SCI_DECODE_TIME = Mp3ReadRegister(SCI_DECODE_TIME);
   Serial.print(F("\t\t"));
@@ -2191,16 +2263,20 @@ uint16_t vs1053::Mp3ReadRegister(uint8_t address){
  * Function to communicate to the VSdsp's registers, indirectly accessing the WRAM.
  * As per data sheet the result is read back twice to verify. As it is not buffered.
  */
-void vs1053::Mp3ReadWRAM(uint16_t address, uint16_t *data, uint32_t length=1, bool is32bit=false) {
-  Mp3WriteRegister(SCI_WRAMADDR, address);
-  for (uint32_t i = 0; i < length; i++) {
-    if (!is32bit) {
-       *data = Mp3ReadRegister(SCI_WRAM);
-       data++;
-    } else {
-      *(uint32_t*)data = (Mp3ReadRegister(SCI_WRAM) << 16) | Mp3ReadRegister(SCI_WRAM);
-      data += 2;
+uint32_t vs1053::Mp3ReadWRAM(uint16_t address, bool is32bit=false) {
+  if (!is32bit) {
+    Mp3WriteRegister(SCI_WRAMADDR, address);
+    return Mp3ReadRegister(SCI_WRAM);
+  } else {
+    Mp3WriteRegister(SCI_WRAMADDR, address + 1);
+    uint16_t msb = Mp3ReadRegister(SCI_WRAM);
+    Mp3WriteRegister(SCI_WRAMADDR, address);
+    uint16_t lsb = Mp3ReadRegister(SCI_WRAM);
+    uint16_t msb2 = Mp3ReadRegister(SCI_WRAM);
+    if (lsb < 0x8000) {
+      msb = msb2;
     }
+    return ((uint32_t)msb << 16) | lsb;
   }
 }
 
@@ -2214,17 +2290,13 @@ void vs1053::Mp3ReadWRAM(uint16_t address, uint16_t *data, uint32_t length=1, bo
  * Function to communicate to the VSdsp's registers, indirectly accessing the WRAM.
  */
 //Write the 16-bit value of a VS10xx WRAM location
-void vs1053::Mp3WriteWRAM(uint16_t address, uint16_t *data, uint32_t length=1, bool is32bit=false) {
+void vs1053::Mp3WriteWRAM(uint16_t address, uint32_t data, bool is32bit=false) {
   Mp3WriteRegister(SCI_WRAMADDR, address);
-  for (uint32_t i = 0; i < length; i++) {
-    if (!is32bit) {
-       Mp3WriteRegister(SCI_WRAM, *data);
-       data++;
-    } else {
-      Mp3WriteRegister(SCI_WRAM, (uint16_t)(*(uint32_t*)data >> 16));
-      Mp3WriteRegister(SCI_WRAM, (uint16_t)(*(uint32_t*)data & 0x0000FFFF));
-      data += 2;
-    }
+  if (!is32bit) {
+     Mp3WriteRegister(SCI_WRAM, data);
+  } else {
+    Mp3WriteRegister(SCI_WRAM, (uint16_t)(data & 0x0000FFFF));
+    Mp3WriteRegister(SCI_WRAM, (uint16_t)(data >> 16));
   }
 }
 
@@ -2261,13 +2333,17 @@ void vs1053::refill() {
 #if PERF_MON_PIN != -1
   digitalWrite(PERF_MON_PIN, LOW);
 #endif
-  // Serial.println(F("filling"));
-  uint16_t position2 = position;
+#if DEBUG
+  uint32_t position2 = position;
   bool iswork = false;
   cntIsr++;
+#endif
+  // Serial.println(F("filling"));
 
   while(digitalRead(MP3_DREQ)) {
+#if DEBUG
     iswork = true;
+#endif
     /* Read data */
     if (bufferOffset == sizeof(mp3DataBuffer)) {
       if(!track.read(mp3DataBuffer, sizeof(mp3DataBuffer))) {
@@ -2275,7 +2351,7 @@ void vs1053::refill() {
         playing_state = cancelling;
         /* track end */
         disableRefill();
-        uint16_t data; Mp3ReadWRAM(para_endFillByte, &data);
+        uint16_t data = Mp3ReadWRAM(para_endFillByte);
         fillEnd((uint8_t)(data & 0x00FF));
         cancelDecoding(false, (uint8_t)(data & 0x00FF));
         track.close();
@@ -2285,7 +2361,9 @@ void vs1053::refill() {
         //Time to exit
         break;
       }
+#if DEBUG
       cntRead++;
+#endif
       bufferOffset = 0;
     }
     
@@ -2293,7 +2371,7 @@ void vs1053::refill() {
       /* Cancelling when track is on going */
       disableRefill();
       cancelDecoding(true);
-      uint16_t data; Mp3ReadWRAM(para_endFillByte, &data);
+      uint16_t data = Mp3ReadWRAM(para_endFillByte);
       fillEnd((uint8_t)(data & 0x00FF));
       track.close();
       playing_state = ready;
@@ -2304,7 +2382,7 @@ void vs1053::refill() {
           Serial.println(F("Rewind"));
           /* Rewind: cancel then start */
           cancelDecoding(true);
-          uint16_t data; Mp3ReadWRAM(para_endFillByte, &data);
+          uint16_t data = Mp3ReadWRAM(para_endFillByte);
           fillEnd((uint8_t)(data & 0x00FF));
           track.seekSet(0);
           bufferOffset = sizeof(mp3DataBuffer);
@@ -2315,7 +2393,7 @@ void vs1053::refill() {
         }
         /* Skipping */
         Mp3WriteRegister(SCI_VOL, 0xFE, 0xFE); // Mute
-        uint16_t data = SKIPPING_SPEED; Mp3WriteWRAM(para_playSpeed, &data); // Speed up
+        Mp3WriteWRAM(para_playSpeed, SKIPPING_SPEED); // Speed up
         isSkipping = true;
         Serial.println(F("skipping start"));
       }
@@ -2342,25 +2420,27 @@ void vs1053::refill() {
   
   /* Check if skipping done */
   if (isSkipping && (position >= skipToPosition)) {
-    uint16_t data = 0x0001; Mp3WriteWRAM(para_playSpeed, &data); // Normal speed
+    Mp3WriteWRAM(para_playSpeed, 0x0001); // Normal speed
     Mp3WriteRegister(SCI_VOL, VolL, VolR); // Unmute
     isSkipping = false;
     Serial.println(F("skipping done"));
     playing_state = playback;
   }
   
+#if DEBUG
   if (iswork) cntWork++;
 
   if(position2 != position) {
     Serial.print(F("position ")); Serial.println(position);
-    // Serial.print(F("cntIsr ")); Serial.println(cntIsr);
-    // Serial.print(F("cntWork ")); Serial.println(cntWork);
-    // Serial.print(F("cntRead ")); Serial.println(cntRead);
-    // Serial.print(F("rate ")); Serial.println(1.0 * cntWork / cntIsr * 100);
+    Serial.print(F("cntIsr ")); Serial.println(cntIsr);
+    Serial.print(F("cntWork ")); Serial.println(cntWork);
+    Serial.print(F("cntRead ")); Serial.println(cntRead);
+    Serial.print(F("rate ")); Serial.println(1.0 * cntWork / cntIsr * 100);
     cntIsr = 0;
     cntWork = 0;
     cntRead = 0;
   }
+#endif
 #if PERF_MON_PIN != -1
   digitalWrite(PERF_MON_PIN,HIGH);
 #endif
@@ -2422,14 +2502,21 @@ void vs1053::SendSingleMIDInote() {
  * Depending upon the means selected to request refill of the VSdsp's data
  * stream buffer, this routine will enable the corresponding service.
  */
-void vs1053::enableRefill() {
-#if defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_Timer1
-  Timer1.attachInterrupt( refill );
-#elif defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_SimpleTimer
-  timer.enable(timerId_mp3);
-#elif !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
-  attachInterrupt(MP3_DREQINT, refill, RISING);
+void vs1053::enableRefill(bool isRecording=false) {
+  if (isRecording) {
+#if defined(OGG_REFILL_USING_TIMER)
+    Timer1.setPeriod(OGG_REFILL_PERIOD);
+    Timer1.attachInterrupt(oggRefill);
 #endif
+  } else {
+#if defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_Timer1
+    Timer1.attachInterrupt( refill );
+#elif defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_SimpleTimer
+    timer.enable(timerId_mp3);
+#elif !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
+    attachInterrupt(MP3_DREQINT, refill, RISING);
+#endif
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -2439,14 +2526,20 @@ void vs1053::enableRefill() {
  * Depending upon the means selected to request refill of the VSdsp's data
  * stream buffer, this routine will disable the corresponding service.
  */
-void vs1053::disableRefill() {
-#if defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_Timer1
-  Timer1.detachInterrupt();
-#elif defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_SimpleTimer
-  timer.disable(timerId_mp3);
-#elif !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
-  detachInterrupt(MP3_DREQINT);
+void vs1053::disableRefill(bool isRecording=false) {
+  if (isRecording) {
+#if defined(OGG_REFILL_USING_TIMER)
+    Timer1.detachInterrupt();
 #endif
+  } else {
+#if defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_Timer1
+    Timer1.detachInterrupt();
+#elif defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_SimpleTimer
+    timer.disable(timerId_mp3);
+#elif !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
+    detachInterrupt(MP3_DREQINT);
+#endif
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -2481,7 +2574,7 @@ void vs1053::cancelDecoding(bool fillTrack, uint8_t fillingByte) {
         if(!track.read(mp3DataBuffer, sizeof(mp3DataBuffer))) {
           /* track end */
           if (!getFilling) {
-            uint16_t data; Mp3ReadWRAM(para_endFillByte, &data);
+            uint16_t data = Mp3ReadWRAM(para_endFillByte);
             fillingByte = (uint8_t)(data & 0x00FF);
           }
           memset(mp3DataBuffer, fillingByte, sizeof(mp3DataBuffer));
@@ -2529,7 +2622,7 @@ void vs1053::fillEnd(uint8_t fillingByte) {
 }
  
 void vs1053::flush_cancel(flush_m mode) {
-  uint16_t data; Mp3ReadWRAM(para_endFillByte, &data);
+  uint16_t data = Mp3ReadWRAM(para_endFillByte);
   uint8_t endFillByte = data & 0x00FF;
 
   if((mode == post) || (mode == both)) {
