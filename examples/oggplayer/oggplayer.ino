@@ -370,7 +370,7 @@ void parse_menu(byte key_command) {
   } else if(key_command == 'c') {
     // Check if the file exists already
     sd.chdir("/",true);
-    SdFile *file = sd.vwd();
+    FatFile *file = sd.vwd();
     char filename[15];
     strcpy(filename, "record01.ogg");
     for (uint8_t i = 1; i < 100; i++) {

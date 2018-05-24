@@ -717,7 +717,7 @@ class vs1053 {
     void trackAlbum(char*);
     uint32_t getDuration();
     void stop();
-    uint8_t recordOgg(char*, char*, bool);
+    uint8_t recordOgg(const char*, const char*, bool);
     uint8_t writeOggInLoop();
     void stopRecord();
     uint16_t getRecordingLevel();
@@ -760,10 +760,10 @@ class vs1053 {
     void getTrackInfo(uint8_t, char*);
     static void enableRefill(bool isRecording=false);
     static void disableRefill(bool isRecording=false);
-    void getBitRateFromMP3File(char*);
+    void getBitRateFromMP3File();
     void getOggInfo();
-    uint8_t VSLoadUserCode(char*);
-    uint8_t VSLoadImage(char*, uint16_t*);
+    uint8_t VSLoadUserCode(const char*);
+    uint8_t VSLoadImage(const char*, uint16_t*);
 
     static bool isPatched;
     static bool isSkipping;
@@ -835,8 +835,8 @@ union sci_bass_m {
  * Global Functions
  */
 char* strip_nonalpha_inplace(char *s);
-format_m getTrackFormat(uint8_t*);
-bool isFormat(format_m, uint8_t*);
+format_m getTrackFormat(char*);
+bool isFormat(format_m, char*);
 
 //------------------------------------------------------------------------------
 /*

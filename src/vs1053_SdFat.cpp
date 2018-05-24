@@ -323,7 +323,7 @@ uint8_t vs1053::vs_init() {
  * - \ref Error_Codes
  * - \ref Plug_Ins
  */
-uint8_t vs1053::VSLoadUserCode(char* fileName){
+uint8_t vs1053::VSLoadUserCode(const char* fileName){
 
   union twobyte val;
   union twobyte addr;
@@ -381,7 +381,7 @@ uint8_t vs1053::VSLoadUserCode(char* fileName){
  * - \ref Error_Codes
  * - \ref Plug_Ins
  */
-uint8_t vs1053::VSLoadImage(char *fileName, uint16_t *address) {
+uint8_t vs1053::VSLoadImage(const char *fileName, uint16_t *address) {
   *address = 0xFFFF;
   if (!digitalRead(MP3_RESET)) return 3;
   if (isBusy()) return 1;
@@ -828,11 +828,7 @@ void vs1053::setBassFrequency(uint16_t frequency) {
 void vs1053::setBassAmplitude(uint8_t amplitude) {
   union sci_bass_m sci_base_value;
 
-  if(amplitude < 0)
-  {
-      amplitude = 0;
-  }
-  else if(amplitude > 15)
+  if(amplitude > 15)
   {
       amplitude = 15;
   }
@@ -1066,12 +1062,9 @@ void vs1053::setMonoMode(bool mono) {
  */
 uint8_t vs1053::playTrack(uint8_t trackNo) {
   //a storage place for track names
-  char trackName[] = "track001.mp3";
-  uint8_t trackNumber = 1;
-
+  char trackName[15];
   //tack the number onto the rest of the filename
   sprintf(trackName, "track%03d.mp3", trackNo);
-
   //play the file
   return play(trackName);
 }
@@ -1128,7 +1121,7 @@ uint8_t vs1053::play(char* fileName, uint32_t timecode) {
     /* 
     Only know how to read bitrate from MP3 file. ignore the rest.
     Note bitrate may get updated later by getAudioInfo() */
-    getBitRateFromMP3File(fileName);
+    getBitRateFromMP3File();
     if (timecode > 0) {
       track.seekSet(timecode * bitrate + start_of_music); // skip to X ms.
     }
@@ -1185,7 +1178,7 @@ uint16_t vs1053::getRecordingLevel() {
  * \see
  * \ref Error_Codes
  */
-uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
+uint8_t vs1053::recordOgg(const char* fileName, const char* profileName, bool isStereo) {
   if (isBusy()) return 1;
   
   playing_state = loading;
@@ -1196,7 +1189,7 @@ uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
   Mp3WriteRegister(SCI_CLOCKF, 0xC000); // Set multiplier to 4.5x
   delay(1);
   Mp3WriteRegister(SCI_BASS, 0); // Clear bass
-  Mp3WriteRegister(SCI_MODE, (registers_backup[2] | SM_RESET & ~SM_ADPCM)); // Soft reset
+  Mp3WriteRegister(SCI_MODE, ((registers_backup[2] | SM_RESET) & ~SM_ADPCM)); // Soft reset
   delay(10);
   isPatched = false;
   Mp3WriteRegister(SCI_AIADDR, 0); 
@@ -1216,13 +1209,11 @@ uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
   Serial.print(F("Image at: $")); Serial.println(addr, HEX);
 #endif
 
-  int sciMODE, sciAICTRL0;
+  int sciMODE;
   if (isStereo) {
     sciMODE = Mp3ReadRegister(SCI_MODE) | SM_ADPCM | SM_LAYER12;
-    sciAICTRL0 = 0x8080;
   } else {
     sciMODE = Mp3ReadRegister(SCI_MODE) | SM_ADPCM;
-    sciAICTRL0 = 0x8000;
   }
   isRecordingStereo = isStereo;
   /* Set Input Mode to either Line1 or Microphone. */
@@ -1231,9 +1222,6 @@ uint8_t vs1053::recordOgg(char* fileName, char* profileName, bool isStereo) {
 #else
   Mp3WriteRegister(SCI_MODE, (sciMODE & ~SM_LINE1));
 #endif
-  Mp3WriteRegister(SCI_AICTRL0, sciAICTRL0);
-  delay(30);
-  while(Mp3ReadRegister(SCI_AICTRL0) & sciAICTRL0 != 0) delay(30);
   Mp3WriteRegister(SCI_AICTRL1, 1024); // Recording gain 1x
   Mp3WriteRegister(SCI_AICTRL2, 0); // Maximum AGC
   Mp3WriteRegister(SCI_AICTRL3, 0);
@@ -1408,7 +1396,7 @@ uint8_t vs1053::oggRefill() {
     Mp3WriteRegister(SCI_CLOCKF, registers_backup[0]); // Restore multiplier
     delay(1);
     Mp3WriteRegister(SCI_BASS, registers_backup[1]); // Restore bass
-    Mp3WriteRegister(SCI_MODE, (Mp3ReadRegister(SCI_MODE) & ~SM_ADPCM | SM_RESET)); // Soft reset
+    Mp3WriteRegister(SCI_MODE, ((Mp3ReadRegister(SCI_MODE) & ~SM_ADPCM) | SM_RESET)); // Soft reset
     delay(1);
     isPatched = false;
     Mp3WriteRegister(SCI_MODE, registers_backup[2]); // Restore mode
@@ -1529,7 +1517,7 @@ void vs1053::pauseMusic() {
  * \note This is effectively equal to resumeDataStream() and is a place holder to
  * resuming the VSdsp's playing and DREQ's.
  */
-uint8_t vs1053::resumeMusic(uint32_t timecode=0xFFFFFFFF) {
+uint8_t vs1053::resumeMusic(uint32_t timecode) {
   if ((playing_state != paused_playback) || !digitalRead(MP3_RESET)) return 1;
 
   if (timecode != 0xFFFFFFFF) {
@@ -1562,7 +1550,7 @@ uint8_t vs1053::skip(int32_t seconds) {
   
   uint32_t targetPosition;
   if (trackFormat == ogg) {
-    if ((seconds < 0) && (-seconds > position)) {
+    if ((seconds < 0) && ((uint32_t)(-seconds) > position)) {
       targetPosition = 0;
     } else if ((position + seconds) > duration) {
       targetPosition = duration;
@@ -1860,7 +1848,7 @@ void vs1053::getAudioInfo() {
  * \warning This feature only works on MP3 files.
  * It will \b LOCK-UP on other file formats, looking for the MP3 header.
  */
-void vs1053::getBitRateFromMP3File(char* fileName) {
+void vs1053::getBitRateFromMP3File() {
   //look for first MP3 frame (11 1's)
   bitrate = 0;
   uint8_t temp = 0;
@@ -1957,7 +1945,7 @@ void vs1053::getOggInfo() {
       }
     }
     if (offset < 0) continue;
-    if ((offset + 4) >= sizeof(mp3DataBuffer)) {
+    if ((uint16_t)(offset + 4) >= sizeof(mp3DataBuffer)) {
       track.seekSet(track.curPosition() - sizeof(mp3DataBuffer) + offset);
       track.read(mp3DataBuffer, 5);
       offset = 0;
@@ -1999,19 +1987,19 @@ void vs1053::getOggInfo() {
       track.seekSet(readOffset - sizeof(mp3DataBuffer));
       continue;
     }
-    if ((offset + 7) >= sizeof(mp3DataBuffer)) {
+    if ((uint16_t)(offset + 7) >= sizeof(mp3DataBuffer)) {
       track.seekSet(track.curPosition() - sizeof(mp3DataBuffer) + offset);
       track.read(mp3DataBuffer, 8);
       offset = 0;
     }
-    sampleNumber = ((uint32_t)mp3DataBuffer[offset + 7]) << 56 | \
-                   ((uint32_t)mp3DataBuffer[offset + 6]) << 48 | \
-                   ((uint32_t)mp3DataBuffer[offset + 5]) << 40 | \
-                   ((uint32_t)mp3DataBuffer[offset + 4])<< 32 | \
-                   ((uint32_t)mp3DataBuffer[offset + 3]) << 24 | \
-                   ((uint32_t)mp3DataBuffer[offset + 2]) << 16 | \
-                   ((uint32_t)mp3DataBuffer[offset + 1]) << 8 | \
-                   ((uint32_t)mp3DataBuffer[offset + 0]);
+    sampleNumber = ((uint64_t)mp3DataBuffer[offset + 7]) << 56 | \
+                   ((uint64_t)mp3DataBuffer[offset + 6]) << 48 | \
+                   ((uint64_t)mp3DataBuffer[offset + 5]) << 40 | \
+                   ((uint64_t)mp3DataBuffer[offset + 4]) << 32 | \
+                   ((uint64_t)mp3DataBuffer[offset + 3]) << 24 | \
+                   ((uint64_t)mp3DataBuffer[offset + 2]) << 16 | \
+                   ((uint64_t)mp3DataBuffer[offset + 1]) << 8 | \
+                   ((uint64_t)mp3DataBuffer[offset + 0]);
     // Serial.print("sampleNumber: "); Serial.println((uint32_t)sampleNumber);
     break;
   }
@@ -2127,7 +2115,7 @@ void vs1053::spiInit(bool toWrite=true) {
  *
  * \warning This uses spiInit() which sets the rate fast for write, too fast for reading. In the case of a subsequent SPI.transfer that is reading back data followup with a SPI.setClockDivider(spi_Read_Rate); as not to get gibberish.
  */
-void vs1053::cs_low(bool toWrite=true) {
+void vs1053::cs_low(bool toWrite) {
   spiInit(toWrite);
   digitalWrite(MP3_XCS, LOW);
 }
@@ -2263,7 +2251,7 @@ uint16_t vs1053::Mp3ReadRegister(uint8_t address){
  * Function to communicate to the VSdsp's registers, indirectly accessing the WRAM.
  * As per data sheet the result is read back twice to verify. As it is not buffered.
  */
-uint32_t vs1053::Mp3ReadWRAM(uint16_t address, bool is32bit=false) {
+uint32_t vs1053::Mp3ReadWRAM(uint16_t address, bool is32bit) {
   if (!is32bit) {
     Mp3WriteRegister(SCI_WRAMADDR, address);
     return Mp3ReadRegister(SCI_WRAM);
@@ -2290,7 +2278,7 @@ uint32_t vs1053::Mp3ReadWRAM(uint16_t address, bool is32bit=false) {
  * Function to communicate to the VSdsp's registers, indirectly accessing the WRAM.
  */
 //Write the 16-bit value of a VS10xx WRAM location
-void vs1053::Mp3WriteWRAM(uint16_t address, uint32_t data, bool is32bit=false) {
+void vs1053::Mp3WriteWRAM(uint16_t address, uint32_t data, bool is32bit) {
   Mp3WriteRegister(SCI_WRAMADDR, address);
   if (!is32bit) {
      Mp3WriteRegister(SCI_WRAM, data);
@@ -2502,7 +2490,7 @@ void vs1053::SendSingleMIDInote() {
  * Depending upon the means selected to request refill of the VSdsp's data
  * stream buffer, this routine will enable the corresponding service.
  */
-void vs1053::enableRefill(bool isRecording=false) {
+void vs1053::enableRefill(bool isRecording) {
   if (isRecording) {
 #if defined(OGG_REFILL_USING_TIMER)
     Timer1.setPeriod(OGG_REFILL_PERIOD);
@@ -2526,7 +2514,7 @@ void vs1053::enableRefill(bool isRecording=false) {
  * Depending upon the means selected to request refill of the VSdsp's data
  * stream buffer, this routine will disable the corresponding service.
  */
-void vs1053::disableRefill(bool isRecording=false) {
+void vs1053::disableRefill(bool isRecording) {
   if (isRecording) {
 #if defined(OGG_REFILL_USING_TIMER)
     Timer1.detachInterrupt();
@@ -2783,7 +2771,7 @@ char* strip_nonalpha_inplace(char *s) {
  *
  * \return boolean true indicating that it is music
  */
-format_m getTrackFormat(uint8_t* filename) {
+format_m getTrackFormat(char *filename) {
   uint8_t len = strlen(filename);
   
   if (strstr(strlwr(filename + (len - 4)), ".mp3")) return mp3;
@@ -2796,7 +2784,7 @@ format_m getTrackFormat(uint8_t* filename) {
   else return unknownFormat;
 }
 
-bool isFormat(format_m targetFormat, uint8_t* filename) {
+bool isFormat(format_m targetFormat, char *filename) {
   format_m format = getTrackFormat(filename);
   if ((format == targetFormat) || ((targetFormat == supportedFormat) && (format != unknownFormat)))
     return true;
